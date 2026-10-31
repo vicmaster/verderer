@@ -1,0 +1,35 @@
+{
+  "name": "verderer",
+  "version": "0.1.0",
+  "description": "A rule ledger for AI agent harnesses: per-rule provenance for CLAUDE.md/AGENTS.md, plus ablation inquests that tell you which rules still earn their place after a model upgrade.",
+  "type": "module",
+  "bin": {
+    "verderer": "bin/verderer.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "claude-code",
+    "agents",
+    "harness",
+    "claude-md",
+    "ablation",
+    "prompt-engineering"
+  ],
+  "author": "Victor Velázquez (https://victorvelazquez.dev)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vicmaster/verderer.git"
+  }
+}
