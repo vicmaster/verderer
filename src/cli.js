@@ -1,13 +1,18 @@
 import { resolve } from 'node:path';
 import { scan } from './scan.js';
-import { loadLedger, ledgerPath } from './ledger.js';
+import { loadLedger, saveLedger, ledgerPath, staleVerdicts, isoToday } from './ledger.js';
 
 const HELP = `verderer — a rule ledger for AI agent harnesses
 
 Usage:
-  verderer scan [dir]     inventory harness rules (CLAUDE.md, AGENTS.md) into .claude/verderer.json
-  verderer status [dir]   show the ledger: active/retired rules, provenance, verdicts
-  verderer probe          print the manual ablation recipe (automation is the roadmap)
+  verderer scan [dir]                    inventory harness rules (CLAUDE.md, AGENTS.md) into .claude/verderer.json
+  verderer status [dir]                  show the ledger: active/retired rules, provenance, verdicts
+  verderer checkpoint [dir] --model <id> record the model by hand (for tools without a detection adapter)
+  verderer probe                         print the manual ablation recipe (automation is the roadmap)
+
+Scan also records which model the repo is actually running on (read from the
+agent tool's own session logs — Claude Code today) and flags verdicts rendered
+against a different model as stale.
 
 The ledger adapts to how git sees each harness file:
   tracked   → provenance comes free from git blame; prune via normal commits/PRs
@@ -15,7 +20,14 @@ The ledger adapts to how git sees each harness file:
 `;
 
 export async function run(argv) {
-  const [cmd, dirArg] = argv;
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--model') flags.model = argv[++i];
+    else positional.push(argv[i]);
+  }
+
+  const [cmd, dirArg] = positional;
   const dir = resolve(dirArg ?? '.');
 
   switch (cmd) {
@@ -23,6 +35,8 @@ export async function run(argv) {
       return cmdScan(dir);
     case 'status':
       return cmdStatus(dir);
+    case 'checkpoint':
+      return cmdCheckpoint(dir, flags.model);
     case 'probe':
       return cmdProbe();
     case undefined:
@@ -38,7 +52,7 @@ export async function run(argv) {
 }
 
 function cmdScan(dir) {
-  const { counts, modes, path } = scan(dir);
+  const { ledger, counts, modes, path, modelChange, stale } = scan(dir);
   const sources = Object.entries(modes);
 
   if (sources.length === 0) {
@@ -50,6 +64,16 @@ function cmdScan(dir) {
     console.log(`${source} (${mode})`);
   }
   console.log(`${counts.active} active · ${counts.added} new · ${counts.retired} retired → ${path}`);
+
+  if (ledger.model) {
+    console.log(`model: ${ledger.model.id} (${ledger.model.source})`);
+  }
+  if (modelChange) {
+    console.log(`model changed: ${modelChange.from} → ${modelChange.to}`);
+  }
+  if (stale.length > 0) {
+    console.log(`${stale.length} verdict(s) rendered against another model are stale — re-run their inquests.`);
+  }
 
   if (sources.some(([, mode]) => mode === 'ignored')) {
     console.log('note: an ignored harness file has no git history — the ledger IS the provenance. Consider tracking .claude/verderer.json even if the harness stays private.');
@@ -66,12 +90,36 @@ function cmdStatus(dir) {
     return 1;
   }
 
-  console.log(`scanned ${ledger.scannedAt} · ${ledger.rules.length} rules\n`);
+  const model = ledger.model ? ` · model ${ledger.model.id}` : '';
+  console.log(`scanned ${ledger.scannedAt}${model} · ${ledger.rules.length} rules\n`);
+
+  const stale = new Set(staleVerdicts(ledger).map((r) => r.id));
   for (const rule of ledger.rules) {
-    const verdict = rule.lastVerdict ? `${rule.lastVerdict.result} (${rule.lastVerdict.date})` : 'unexamined';
+    let verdict = rule.lastVerdict ? `${rule.lastVerdict.result} (${rule.lastVerdict.date})` : 'unexamined';
+    if (stale.has(rule.id)) verdict += ' [stale: judged on ' + rule.lastVerdict.model + ']';
     const flag = rule.status === 'retired' ? ' [retired]' : '';
     console.log(`${rule.id}  ${rule.firstSeen}  ${verdict}${flag}`);
     console.log(`  ${rule.section ? rule.section + ' · ' : ''}${truncate(rule.text, 100)}`);
+  }
+
+  return 0;
+}
+
+function cmdCheckpoint(dir, modelId) {
+  if (!modelId) {
+    console.error('usage: verderer checkpoint [dir] --model <id>');
+    return 1;
+  }
+
+  const ledger = loadLedger(dir);
+  const prior = ledger.model?.id;
+  ledger.model = { id: modelId, source: 'manual', detectedAt: isoToday() };
+  saveLedger(dir, ledger);
+
+  console.log(prior && prior !== modelId ? `model changed: ${prior} → ${modelId}` : `model: ${modelId}`);
+  const stale = staleVerdicts(ledger);
+  if (stale.length > 0) {
+    console.log(`${stale.length} verdict(s) rendered against another model are stale — re-run their inquests.`);
   }
 
   return 0;

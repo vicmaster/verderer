@@ -24,7 +24,7 @@ export function saveLedger(dir, ledger) {
 // Known rules keep their provenance and verdicts; new ones get firstSeen
 // (from git blame when the file is tracked, else today); rules that left
 // the file are retired, never deleted — the ledger is append-only history.
-export function mergeScan(ledger, scanned, { modes, today = isoToday() } = {}) {
+export function mergeScan(ledger, scanned, { modes, model, today = isoToday() } = {}) {
   const existing = new Map(ledger.rules.map((r) => [r.id, r]));
   const seen = new Set();
   const rules = [];
@@ -58,9 +58,16 @@ export function mergeScan(ledger, scanned, { modes, today = isoToday() } = {}) {
   }
 
   return {
-    ledger: { version: LEDGER_VERSION, scannedAt: today, modes, rules: rules.map(stripBlame) },
+    ledger: { version: LEDGER_VERSION, scannedAt: today, modes, model: model ?? ledger.model, rules: rules.map(stripBlame) },
     counts,
   };
+}
+
+// A verdict was rendered against one model; a different model makes it stale.
+export function staleVerdicts(ledger) {
+  const current = ledger.model?.id;
+  if (!current) return [];
+  return ledger.rules.filter((r) => r.status === 'active' && r.lastVerdict?.model && r.lastVerdict.model !== current);
 }
 
 function stripBlame({ blame, ...rule }) {

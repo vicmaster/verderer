@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeScan } from '../src/ledger.js';
+import { mergeScan, staleVerdicts } from '../src/ledger.js';
 
 const rule = (id, text) => ({ id, text, source: 'CLAUDE.md', section: 'Conventions', line: 1 });
 
@@ -41,6 +41,30 @@ test('rules that leave the file are retired, never deleted', () => {
   assert.equal(counts.retired, 1);
   assert.equal(ledger.rules[0].status, 'retired');
   assert.equal(ledger.rules[0].retiredAt, '2026-11-30');
+});
+
+test('mergeScan records the model and keeps the prior one when detection fails', () => {
+  const model = { id: 'claude-fable-5', source: 'claude-transcripts', detectedAt: '2026-10-31' };
+  const { ledger } = mergeScan({ version: 1, rules: [] }, [], { model, today: '2026-10-31' });
+  assert.deepEqual(ledger.model, model);
+
+  const { ledger: next } = mergeScan(ledger, [], { model: undefined, today: '2026-11-30' });
+  assert.deepEqual(next.model, model);
+});
+
+test('staleVerdicts flags active rules judged on a different model', () => {
+  const ledger = {
+    version: 1,
+    model: { id: 'claude-fable-5-1' },
+    rules: [
+      { ...rule('aaa', 'judged on old'), status: 'active', lastVerdict: { result: 'needed', model: 'claude-fable-5' } },
+      { ...rule('bbb', 'judged on current'), status: 'active', lastVerdict: { result: 'dead', model: 'claude-fable-5-1' } },
+      { ...rule('ccc', 'unexamined'), status: 'active', lastVerdict: null },
+      { ...rule('ddd', 'retired'), status: 'retired', lastVerdict: { result: 'needed', model: 'claude-fable-5' } },
+    ],
+  };
+
+  assert.deepEqual(staleVerdicts(ledger).map((r) => r.id), ['aaa']);
 });
 
 test('retiring is idempotent: an already-retired rule keeps its retiredAt', () => {

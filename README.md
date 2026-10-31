@@ -13,9 +13,10 @@ Validated on a real repo before a line of this tool existed: of 3 long-standing 
 ## Usage
 
 ```bash
-npx verderer scan      # inventory harness rules into .claude/verderer.json
-npx verderer status    # active/retired rules, provenance, verdicts
-npx verderer probe     # the ablation recipe (automation is the roadmap)
+npx verderer scan                        # inventory harness rules into .claude/verderer.json
+npx verderer status                      # active/retired rules, provenance, verdicts
+npx verderer checkpoint --model <id>     # record the model by hand (tools without an adapter)
+npx verderer probe                       # the ablation recipe (automation is the roadmap)
 ```
 
 `scan` is idempotent and append-only: known rules keep their provenance and verdicts, new rules are dated, rules that left the file are marked retired — never deleted. The ledger is the history of your harness's law.
@@ -26,6 +27,17 @@ Verderer checks how git sees each harness file and adapts:
 
 - **tracked** — provenance comes free: `git blame` dates every rule (and the date tells you which model era it was written against). Pruning is a normal commit or PR; rollback is git.
 - **ignored** — a deliberate privacy choice some repos make. There is no history, so the ledger carries provenance itself: first scan records rules as `origin: unknown`, everything after is dated. Consider tracking `.claude/verderer.json` even while the harness stays private — the decisions get history without exposing the content.
+
+## Model changes
+
+Verderer never polls for releases. The question that matters is narrower: **is this repo running on a different model than the one your verdicts were judged against?** Every verdict records its model; `scan` reads the model id the repo actually ran on from the agent tool's own session logs (Claude Code transcripts today — concrete ids, so a stable `"opus"` alias doesn't hide an upgrade underneath) and flags verdicts judged on another model as stale:
+
+```
+model changed: claude-fable-5 → claude-fable-5-1
+3 verdict(s) rendered against another model are stale — re-run their inquests.
+```
+
+For tools without a detection adapter yet, `verderer checkpoint --model <id>` records it by hand.
 
 ## The ledger
 
@@ -40,7 +52,7 @@ Verderer checks how git sees each harness file and adapts:
   "firstSeen": "2026-03-17",
   "origin": "git:da89e1b",
   "status": "active",
-  "lastVerdict": { "date": "2026-10-31", "result": "dead", "evidence": "ablation probe: model derived it from neighboring code" }
+  "lastVerdict": { "date": "2026-10-31", "result": "dead", "model": "claude-fable-5", "evidence": "ablation probe: model derived it from neighboring code" }
 }
 ```
 
@@ -49,8 +61,8 @@ Verdicts are three-valued on purpose: **dead** (the model does it unaided), **de
 ## Roadmap
 
 - `probe` automation: per-rule ablation worktrees + headless runs + verdict recording (today it prints the validated manual recipe).
-- Model-upgrade trigger: re-examine `unexamined`/`needed` rules when the configured model changes.
-- More sources: `.claude/agents/*.md`, skills.
+- Model-detection adapters beyond Claude Code (Codex sessions next); the ledger core is already tool-agnostic.
+- More sources: `.claude/agents/*.md`, `GEMINI.md`, `.cursor/rules/`, skills.
 
 ## Development
 

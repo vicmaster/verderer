@@ -2,7 +2,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseRules } from './parse.js';
 import { fileMode, blameDates } from './git.js';
-import { loadLedger, saveLedger, mergeScan } from './ledger.js';
+import { detectModel } from './model.js';
+import { loadLedger, saveLedger, mergeScan, staleVerdicts, isoToday } from './ledger.js';
 
 export const SOURCES = ['CLAUDE.md', 'AGENTS.md'];
 
@@ -25,8 +26,19 @@ export function scan(dir) {
     }
   }
 
-  const { ledger, counts } = mergeScan(loadLedger(dir), scanned, { modes });
+  const prior = loadLedger(dir);
+  const detected = detectModel(dir);
+  const model = detected ? { ...detected, detectedAt: isoToday() } : prior.model;
+
+  const { ledger, counts } = mergeScan(prior, scanned, { modes, model });
   const path = saveLedger(dir, ledger);
 
-  return { ledger, counts, modes, path };
+  return {
+    ledger,
+    counts,
+    modes,
+    path,
+    modelChange: prior.model?.id && model?.id && prior.model.id !== model.id ? { from: prior.model.id, to: model.id } : null,
+    stale: staleVerdicts(ledger),
+  };
 }
