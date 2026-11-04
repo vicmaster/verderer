@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { scan } from './scan.js';
-import { loadLedger, saveLedger, ledgerPath, staleVerdicts, isoToday } from './ledger.js';
+import { loadLedger, saveLedger, ledgerPath, staleVerdicts, recordVerdict, isoToday } from './ledger.js';
 
 const HELP = `verderer — a rule ledger for AI agent harnesses
 
@@ -8,6 +8,8 @@ Usage:
   verderer scan [dir]                    inventory harness rules (CLAUDE.md, AGENTS.md) into .claude/verderer.json
   verderer status [dir]                  show the ledger: active/retired rules, provenance, verdicts
   verderer checkpoint [dir] --model <id> record the model by hand (for tools without a detection adapter)
+  verderer verdict <id> <result> [dir] --evidence <text>
+                                         record an inquest: dead | derivable | needed (id prefix is enough)
   verderer probe                         print the manual ablation recipe (automation is the roadmap)
 
 Scan also records which model the repo is actually running on (read from the
@@ -24,11 +26,12 @@ export async function run(argv) {
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--model') flags.model = argv[++i];
+    else if (argv[i] === '--evidence') flags.evidence = argv[++i];
     else positional.push(argv[i]);
   }
 
-  const [cmd, dirArg] = positional;
-  const dir = resolve(dirArg ?? '.');
+  const [cmd, ...args] = positional;
+  const dir = resolve(args[0] ?? '.');
 
   switch (cmd) {
     case 'scan':
@@ -37,6 +40,10 @@ export async function run(argv) {
       return cmdStatus(dir);
     case 'checkpoint':
       return cmdCheckpoint(dir, flags.model);
+    case 'verdict': {
+      const [id, result, dirArg] = args;
+      return cmdVerdict(resolve(dirArg ?? '.'), id, result, flags.evidence);
+    }
     case 'probe':
       return cmdProbe();
     case undefined:
@@ -125,6 +132,27 @@ function cmdCheckpoint(dir, modelId) {
   return 0;
 }
 
+function cmdVerdict(dir, id, result, evidence) {
+  const prior = loadLedger(dir);
+
+  if (prior.rules.length === 0) {
+    console.error(`no ledger at ${ledgerPath(dir)} — run \`verderer scan\` first`);
+    return 1;
+  }
+
+  try {
+    const { ledger, rule } = recordVerdict(prior, id, result, { evidence });
+    saveLedger(dir, ledger);
+    console.log(`${rule.id}  ${result} on ${rule.lastVerdict.model}`);
+    console.log(`  ${truncate(rule.text, 100)}`);
+    return 0;
+  } catch (err) {
+    console.error(err.message);
+    console.error('usage: verderer verdict <id> <dead|derivable|needed> [dir] --evidence <text>');
+    return 1;
+  }
+}
+
 function cmdProbe() {
   console.log(`probe automation is on the roadmap. The manual recipe (validated on a real repo):
 
@@ -136,7 +164,8 @@ function cmdProbe() {
      - yes, by reading the codebase → the rule is dead (the code now carries the convention)
      - yes, but a miss would be expensive → derivable; keeping it is cheap insurance
      - no → the rule still earns its place
-5. Record the verdict in the ledger, prune with evidence.
+5. Record it: verderer verdict <id> <dead|derivable|needed> --evidence "..."
+   then prune with evidence.
 
 Verdicts are judgment calls on blast radius — verderer reports, you decide. It never auto-deletes.`);
   return 0;

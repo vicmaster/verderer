@@ -16,6 +16,8 @@ Validated on a real repo before a line of this tool existed: of 3 long-standing 
 npx verderer scan                        # inventory harness rules into .claude/verderer.json
 npx verderer status                      # active/retired rules, provenance, verdicts
 npx verderer checkpoint --model <id>     # record the model by hand (tools without an adapter)
+npx verderer verdict 9f2c dead --evidence "derived it from neighboring code"
+                                         # record an inquest (id prefix is enough)
 npx verderer probe                       # the ablation recipe (automation is the roadmap)
 ```
 
@@ -57,6 +59,8 @@ For tools without a detection adapter yet, `verderer checkpoint --model <id>` re
 ```
 
 Verdicts are three-valued on purpose: **dead** (the model does it unaided), **derivable** (unaided but an expensive miss — keeping it is cheap insurance), **needed**. Blast radius is a judgment call, so verderer reports and you decide; it never auto-deletes a rule.
+
+`verderer verdict` records one: it stamps today's date and the ledger's current model, so the next model change flags it as stale. Evidence is required.
 
 ## Roadmap
 
