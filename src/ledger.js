@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { pairRewordings } from './reword.js';
 
 export const LEDGER_VERSION = 1;
 
@@ -21,22 +22,31 @@ export function saveLedger(dir, ledger) {
 }
 
 // Merge a fresh scan into the existing ledger.
-// Known rules keep their provenance and verdicts; new ones get firstSeen
-// (from git blame when the file is tracked, else today); rules that left
-// the file are retired, never deleted — the ledger is append-only history.
+// Known rules keep their provenance and verdicts; reworded rules too, with
+// the old wording kept in `revisions`; new ones get firstSeen (from git
+// blame when the file is tracked, else today); rules that left the file are
+// retired, never deleted — the ledger is append-only history.
 export function mergeScan(ledger, scanned, { modes, model, today = isoToday() } = {}) {
   const existing = new Map(ledger.rules.map((r) => [r.id, r]));
-  const seen = new Set();
+  const seen = new Set(scanned.map((r) => r.id));
+  const rewordings = pairRewordings(ledger.rules, scanned);
   const rules = [];
-  const counts = { active: 0, added: 0, retired: 0 };
+  const counts = { active: 0, added: 0, reworded: 0, retired: 0 };
 
   for (const rule of scanned) {
-    seen.add(rule.id);
     const prior = existing.get(rule.id);
 
     if (prior) {
       rules.push({ ...prior, text: rule.text, source: rule.source, section: rule.section, line: rule.line, status: 'active', retiredAt: undefined });
       counts.active++;
+      continue;
+    }
+
+    const before = rewordings.get(rule.id);
+    if (before) {
+      rules.push(reword(before, rule, today));
+      seen.add(before.id);
+      counts.reworded++;
       continue;
     }
 
@@ -63,11 +73,32 @@ export function mergeScan(ledger, scanned, { modes, model, today = isoToday() } 
   };
 }
 
-// A verdict was rendered against one model; a different model makes it stale.
+// The same rule in new words: new id and text, old provenance and verdict.
+// The verdict remembers which wording it judged, so it reads as stale now.
+function reword(before, rule, today) {
+  return {
+    ...before,
+    id: rule.id,
+    text: rule.text,
+    source: rule.source,
+    section: rule.section,
+    line: rule.line,
+    revisions: [...(before.revisions ?? []), { id: before.id, text: before.text, until: today }],
+    lastVerdict: before.lastVerdict && { ruleId: before.id, ...before.lastVerdict },
+  };
+}
+
+// A verdict judged one wording on one model; a change to either makes it stale.
+export function staleReason(rule, modelId) {
+  const verdict = rule.lastVerdict;
+  if (rule.status !== 'active' || !verdict) return null;
+  if (verdict.ruleId && verdict.ruleId !== rule.id) return 'judged an earlier wording';
+  if (modelId && verdict.model && verdict.model !== modelId) return `judged on ${verdict.model}`;
+  return null;
+}
+
 export function staleVerdicts(ledger) {
-  const current = ledger.model?.id;
-  if (!current) return [];
-  return ledger.rules.filter((r) => r.status === 'active' && r.lastVerdict?.model && r.lastVerdict.model !== current);
+  return ledger.rules.filter((r) => staleReason(r, ledger.model?.id));
 }
 
 export const VERDICTS = ['dead', 'derivable', 'needed'];
@@ -90,7 +121,7 @@ export function recordVerdict(ledger, prefix, result, { evidence, today = isoTod
   if (matches.length > 1) throw new Error(`id ${prefix} is ambiguous: ${matches.map((r) => r.id).join(', ')}`);
 
   const [rule] = matches;
-  const verdict = { date: today, result, model, evidence };
+  const verdict = { date: today, result, model, evidence, ruleId: rule.id };
 
   return {
     ledger: { ...ledger, rules: ledger.rules.map((r) => (r === rule ? { ...r, lastVerdict: verdict } : r)) },
