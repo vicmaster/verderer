@@ -21,6 +21,8 @@ npx verderer verdict 9f2c dead --evidence "derived it from neighboring code"
 npx verderer probe                       # the ablation recipe (automation is the roadmap)
 ```
 
+A rule is a top-level list item (`-`, `*`, `+`, `1.`) or a paragraph that opens with a bold lead (`**Never trust a merged schema.** Every module…`). Code blocks and spec-kit's generated sections (`Active Technologies`, `Recent Changes`) are skipped.
+
 `scan` is idempotent and append-only: known rules keep their provenance and verdicts, new rules are dated, rules that left the file are marked retired — never deleted. The ledger is the history of your harness's law.
 
 Rewording a rule doesn't reset it. A rule edited in place (same spot, mostly the same words, or a trim of them) keeps its provenance and verdict, and its old wording goes into `revisions`. The verdict judged the old wording, so it shows as stale until you re-run the inquest.
