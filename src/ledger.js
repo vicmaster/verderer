@@ -70,6 +70,34 @@ export function staleVerdicts(ledger) {
   return ledger.rules.filter((r) => r.status === 'active' && r.lastVerdict?.model && r.lastVerdict.model !== current);
 }
 
+export const VERDICTS = ['dead', 'derivable', 'needed'];
+
+// Stamp a verdict on one rule, found by id prefix (like a git sha).
+// The verdict records the ledger's current model so a later model change
+// can flag it as stale; without a model there is nothing to judge against.
+export function recordVerdict(ledger, prefix, result, { evidence, today = isoToday() } = {}) {
+  if (!VERDICTS.includes(result)) {
+    throw new Error(`verdict must be one of: ${VERDICTS.join(', ')}`);
+  }
+
+  if (!evidence) throw new Error('a verdict needs --evidence');
+
+  const model = ledger.model?.id;
+  if (!model) throw new Error('no model recorded — run `verderer scan` or `verderer checkpoint --model <id>` first');
+
+  const matches = prefix ? ledger.rules.filter((r) => r.id.startsWith(prefix)) : [];
+  if (matches.length === 0) throw new Error(`no rule matches id ${prefix ?? '(none)'}`);
+  if (matches.length > 1) throw new Error(`id ${prefix} is ambiguous: ${matches.map((r) => r.id).join(', ')}`);
+
+  const [rule] = matches;
+  const verdict = { date: today, result, model, evidence };
+
+  return {
+    ledger: { ...ledger, rules: ledger.rules.map((r) => (r === rule ? { ...r, lastVerdict: verdict } : r)) },
+    rule: { ...rule, lastVerdict: verdict },
+  };
+}
+
 function stripBlame({ blame, ...rule }) {
   return rule;
 }

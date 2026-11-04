@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeScan, staleVerdicts } from '../src/ledger.js';
+import { mergeScan, staleVerdicts, recordVerdict } from '../src/ledger.js';
 
 const rule = (id, text) => ({ id, text, source: 'CLAUDE.md', section: 'Conventions', line: 1 });
 
@@ -73,4 +73,49 @@ test('retiring is idempotent: an already-retired rule keeps its retiredAt', () =
 
   assert.equal(counts.retired, 0);
   assert.equal(ledger.rules[0].retiredAt, '2026-11-30');
+});
+
+const judged = () => ({
+  version: 1,
+  model: { id: 'claude-fable-5-1' },
+  rules: [
+    { ...rule('9f2c01ab34de', 'ESM only'), status: 'active', lastVerdict: null },
+    { ...rule('9f7700000000', 'tabs not spaces'), status: 'active', lastVerdict: null },
+  ],
+});
+
+test('recordVerdict stamps date, model and evidence on the rule an id prefix names', () => {
+  const { ledger, rule: judgedRule } = recordVerdict(judged(), '9f2c', 'dead', { evidence: 'derived from neighbors', today: '2026-11-04' });
+  const expected = { date: '2026-11-04', result: 'dead', model: 'claude-fable-5-1', evidence: 'derived from neighbors' };
+
+  assert.deepEqual(judgedRule.lastVerdict, expected);
+  assert.deepEqual(ledger.rules[0].lastVerdict, expected);
+  assert.equal(ledger.rules[1].lastVerdict, null);
+});
+
+test('recordVerdict leaves the input ledger untouched', () => {
+  const prior = judged();
+  recordVerdict(prior, '9f2c', 'needed', { evidence: 'missed it' });
+
+  assert.equal(prior.rules[0].lastVerdict, null);
+});
+
+test('a fresh verdict on the current model clears staleness', () => {
+  const prior = judged();
+  prior.rules[0].lastVerdict = { result: 'needed', model: 'claude-fable-5' };
+  assert.equal(staleVerdicts(prior).length, 1);
+
+  const { ledger } = recordVerdict(prior, '9f2c', 'dead', { evidence: 're-run' });
+  assert.equal(staleVerdicts(ledger).length, 0);
+});
+
+test('recordVerdict rejects bad input', () => {
+  const opts = { evidence: 'x' };
+
+  assert.throws(() => recordVerdict(judged(), '9f2c', 'maybe', opts), /must be one of/);
+  assert.throws(() => recordVerdict(judged(), '9f2c', 'dead', {}), /needs --evidence/);
+  assert.throws(() => recordVerdict(judged(), 'ffff', 'dead', opts), /no rule matches/);
+  assert.throws(() => recordVerdict(judged(), undefined, 'dead', opts), /no rule matches/);
+  assert.throws(() => recordVerdict(judged(), '9f', 'dead', opts), /ambiguous: 9f2c01ab34de, 9f7700000000/);
+  assert.throws(() => recordVerdict({ ...judged(), model: undefined }, '9f2c', 'dead', opts), /no model recorded/);
 });
