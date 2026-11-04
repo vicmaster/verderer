@@ -23,6 +23,8 @@ npx verderer probe                       # the ablation recipe (automation is th
 
 `scan` is idempotent and append-only: known rules keep their provenance and verdicts, new rules are dated, rules that left the file are marked retired — never deleted. The ledger is the history of your harness's law.
 
+Rewording a rule doesn't reset it. A rule edited in place (same spot, mostly the same words, or a trim of them) keeps its provenance and verdict, and its old wording goes into `revisions`. The verdict judged the old wording, so it shows as stale until you re-run the inquest.
+
 ## Two modes, decided by git
 
 Verderer checks how git sees each harness file and adapts:
@@ -54,13 +56,13 @@ For tools without a detection adapter yet, `verderer checkpoint --model <id>` re
   "firstSeen": "2026-03-17",
   "origin": "git:da89e1b",
   "status": "active",
-  "lastVerdict": { "date": "2026-10-31", "result": "dead", "model": "claude-fable-5", "evidence": "ablation probe: model derived it from neighboring code" }
+  "lastVerdict": { "date": "2026-10-31", "result": "dead", "model": "claude-fable-5", "evidence": "ablation probe: model derived it from neighboring code", "ruleId": "9f2c01ab34de" }
 }
 ```
 
 Verdicts are three-valued on purpose: **dead** (the model does it unaided), **derivable** (unaided but an expensive miss — keeping it is cheap insurance), **needed**. Blast radius is a judgment call, so verderer reports and you decide; it never auto-deletes a rule.
 
-`verderer verdict` records one: it stamps today's date and the ledger's current model, so the next model change flags it as stale. Evidence is required.
+`verderer verdict` records one: it stamps today's date, the ledger's current model and the rule's wording, so a model change or a rewording flags it as stale. Evidence is required.
 
 ## Roadmap
 

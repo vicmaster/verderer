@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { scan } from './scan.js';
-import { loadLedger, saveLedger, ledgerPath, staleVerdicts, recordVerdict, isoToday } from './ledger.js';
+import { loadLedger, saveLedger, ledgerPath, staleVerdicts, staleReason, recordVerdict, isoToday } from './ledger.js';
 
 const HELP = `verderer — a rule ledger for AI agent harnesses
 
@@ -70,7 +70,7 @@ function cmdScan(dir) {
   for (const [source, mode] of sources) {
     console.log(`${source} (${mode})`);
   }
-  console.log(`${counts.active} active · ${counts.added} new · ${counts.retired} retired → ${path}`);
+  console.log(`${counts.active} active · ${counts.added} new · ${counts.reworded} reworded · ${counts.retired} retired → ${path}`);
 
   if (ledger.model) {
     console.log(`model: ${ledger.model.id} (${ledger.model.source})`);
@@ -79,7 +79,7 @@ function cmdScan(dir) {
     console.log(`model changed: ${modelChange.from} → ${modelChange.to}`);
   }
   if (stale.length > 0) {
-    console.log(`${stale.length} verdict(s) rendered against another model are stale — re-run their inquests.`);
+    console.log(`${stale.length} stale verdict(s): judged on another model or an earlier wording — re-run their inquests.`);
   }
 
   if (sources.some(([, mode]) => mode === 'ignored')) {
@@ -100,10 +100,10 @@ function cmdStatus(dir) {
   const model = ledger.model ? ` · model ${ledger.model.id}` : '';
   console.log(`scanned ${ledger.scannedAt}${model} · ${ledger.rules.length} rules\n`);
 
-  const stale = new Set(staleVerdicts(ledger).map((r) => r.id));
   for (const rule of ledger.rules) {
     let verdict = rule.lastVerdict ? `${rule.lastVerdict.result} (${rule.lastVerdict.date})` : 'unexamined';
-    if (stale.has(rule.id)) verdict += ' [stale: judged on ' + rule.lastVerdict.model + ']';
+    const stale = staleReason(rule, ledger.model?.id);
+    if (stale) verdict += ` [stale: ${stale}]`;
     const flag = rule.status === 'retired' ? ' [retired]' : '';
     console.log(`${rule.id}  ${rule.firstSeen}  ${verdict}${flag}`);
     console.log(`  ${rule.section ? rule.section + ' · ' : ''}${truncate(rule.text, 100)}`);
@@ -126,7 +126,7 @@ function cmdCheckpoint(dir, modelId) {
   console.log(prior && prior !== modelId ? `model changed: ${prior} → ${modelId}` : `model: ${modelId}`);
   const stale = staleVerdicts(ledger);
   if (stale.length > 0) {
-    console.log(`${stale.length} verdict(s) rendered against another model are stale — re-run their inquests.`);
+    console.log(`${stale.length} stale verdict(s): judged on another model or an earlier wording — re-run their inquests.`);
   }
 
   return 0;

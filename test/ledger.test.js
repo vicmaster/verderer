@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeScan, staleVerdicts, recordVerdict } from '../src/ledger.js';
+import { mergeScan, staleVerdicts, staleReason, recordVerdict } from '../src/ledger.js';
 
 const rule = (id, text) => ({ id, text, source: 'CLAUDE.md', section: 'Conventions', line: 1 });
 
@@ -86,7 +86,7 @@ const judged = () => ({
 
 test('recordVerdict stamps date, model and evidence on the rule an id prefix names', () => {
   const { ledger, rule: judgedRule } = recordVerdict(judged(), '9f2c', 'dead', { evidence: 'derived from neighbors', today: '2026-11-04' });
-  const expected = { date: '2026-11-04', result: 'dead', model: 'claude-fable-5-1', evidence: 'derived from neighbors' };
+  const expected = { date: '2026-11-04', result: 'dead', model: 'claude-fable-5-1', evidence: 'derived from neighbors', ruleId: '9f2c01ab34de' };
 
   assert.deepEqual(judgedRule.lastVerdict, expected);
   assert.deepEqual(ledger.rules[0].lastVerdict, expected);
@@ -118,4 +118,55 @@ test('recordVerdict rejects bad input', () => {
   assert.throws(() => recordVerdict(judged(), undefined, 'dead', opts), /no rule matches/);
   assert.throws(() => recordVerdict(judged(), '9f', 'dead', opts), /ambiguous: 9f2c01ab34de, 9f7700000000/);
   assert.throws(() => recordVerdict({ ...judged(), model: undefined }, '9f2c', 'dead', opts), /no model recorded/);
+});
+
+const ledgerWith = (...rules) => ({ version: 1, model: { id: 'claude-fable-5-1' }, rules });
+const verdict = { date: '2026-11-01', result: 'needed', model: 'claude-fable-5-1', evidence: 'x', ruleId: 'old' };
+const known = { ...rule('old', 'ESM only; imports use .js extensions even in TS source'), firstSeen: '2026-01-15', origin: 'git:abc1234', status: 'active', lastVerdict: verdict };
+
+test('a reworded rule keeps provenance and verdict, with the old wording in revisions', () => {
+  const { ledger, counts } = mergeScan(ledgerWith(known), [rule('new', 'ESM only')], { today: '2026-11-04' });
+
+  assert.deepEqual(counts, { active: 0, added: 0, reworded: 1, retired: 0 });
+  assert.equal(ledger.rules.length, 1);
+
+  const [reworded] = ledger.rules;
+  assert.equal(reworded.id, 'new');
+  assert.equal(reworded.text, 'ESM only');
+  assert.equal(reworded.firstSeen, '2026-01-15');
+  assert.equal(reworded.origin, 'git:abc1234');
+  assert.deepEqual(reworded.revisions, [{ id: 'old', text: known.text, until: '2026-11-04' }]);
+  assert.equal(reworded.lastVerdict.result, 'needed');
+});
+
+test('a verdict on an earlier wording is stale until re-judged', () => {
+  const { ledger } = mergeScan(ledgerWith(known), [rule('new', 'ESM only')], { today: '2026-11-04' });
+
+  assert.equal(staleReason(ledger.rules[0], 'claude-fable-5-1'), 'judged an earlier wording');
+
+  const { ledger: rejudged } = recordVerdict(ledger, 'new', 'dead', { evidence: 'derived it' });
+  assert.equal(staleReason(rejudged.rules[0], 'claude-fable-5-1'), null);
+});
+
+test('legacy verdicts without ruleId learn the wording they judged when reworded', () => {
+  const legacy = { ...known, lastVerdict: { date: '2026-11-01', result: 'dead', model: 'claude-fable-5-1' } };
+  const { ledger } = mergeScan(ledgerWith(legacy), [rule('new', 'ESM only')], { today: '2026-11-04' });
+
+  assert.equal(ledger.rules[0].lastVerdict.ruleId, 'old');
+  assert.equal(staleVerdicts(ledger).length, 1);
+});
+
+test('revisions accumulate across rewordings', () => {
+  const { ledger: once } = mergeScan(ledgerWith(known), [rule('mid', 'ESM only; imports use .js extensions')], { today: '2026-11-04' });
+  const { ledger: twice } = mergeScan(once, [rule('new', 'ESM only')], { today: '2026-11-05' });
+
+  assert.deepEqual(twice.rules[0].revisions.map((r) => r.id), ['old', 'mid']);
+  assert.equal(twice.rules[0].firstSeen, '2026-01-15');
+});
+
+test('an unrelated swap still retires the old rule and adds the new one', () => {
+  const { ledger, counts } = mergeScan(ledgerWith(known), [rule('other', 'Tabs, not spaces')], { today: '2026-11-04' });
+
+  assert.deepEqual(counts, { active: 0, added: 1, reworded: 0, retired: 1 });
+  assert.deepEqual(ledger.rules.map((r) => [r.id, r.status]), [['other', 'active'], ['old', 'retired']]);
 });
