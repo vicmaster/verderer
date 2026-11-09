@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { parseRules, ruleId } from '../src/parse.js';
-import { ablate, probe, parseRun } from '../src/probe.js';
+import { ablate, probe } from '../src/probe.js';
 import { saveLedger } from '../src/ledger.js';
 
 const HARNESS = `# repo
@@ -52,16 +52,6 @@ test('ablate returns null when the rule is not in the file', () => {
   assert.equal(ablate(HARNESS, 'CLAUDE.md', 'ffffffffffff'), null);
 });
 
-test('parseRun reads the result, cost and errors of a headless run', () => {
-  const ok = JSON.stringify({ result: 'done', total_cost_usd: 0.12, num_turns: 4, permission_denials: [{}], is_error: false });
-  assert.deepEqual(parseRun(ok, '', 0), { result: 'done', cost: 0.12, turns: 4, denials: 1, error: null });
-
-  const capped = JSON.stringify({ is_error: true, subtype: 'error_max_budget_usd' });
-  assert.equal(parseRun(capped, '', 1).error, 'error_max_budget_usd');
-
-  assert.equal(parseRun('', 'Invalid model', 1).error, 'Invalid model');
-});
-
 // A repo with a tracked CLAUDE.md, a scanned ledger, and a fake agent that
 // names its new file in kebab-case only when the harness tells it to.
 function repoWithLedger(t) {
@@ -85,6 +75,12 @@ const kebabAgent = (calls) => async ({ cwd, task, model, budget }) => {
   return { result: 'added the store', cost: 0.5, turns: 3, denials: 0, error: null };
 };
 
+const fakeJudge = async ({ arms }) => ({
+  result: arms.ablated.diff.includes('userStore.js') ? 'needed' : 'dead',
+  evidence: 'the ablated run named the file userStore.js',
+  cost: 0.1,
+});
+
 test('probe runs the task with and without the rule and reports both', async (t) => {
   const dir = repoWithLedger(t);
   const calls = [];
@@ -93,6 +89,7 @@ test('probe runs the task with and without the rule and reports both', async (t)
   const { report, path, worktrees } = await probe(dir, KEBAB_RULE.slice(0, 6), {
     task: 'add a user store module',
     runner: kebabAgent(calls),
+    judge: fakeJudge,
     now,
   });
 
@@ -104,6 +101,7 @@ test('probe runs the task with and without the rule and reports both', async (t)
   assert.doesNotMatch(report.arms.ablated.diff, /CLAUDE\.md/, 'the planted harness is not part of the diff');
   assert.equal(report.arms.control.cost, 0.5);
   assert.equal(report.rule.id, KEBAB_RULE);
+  assert.deepEqual(report.judge, { result: 'needed', evidence: 'the ablated run named the file userStore.js', cost: 0.1 });
 
   assert.equal(path, join(dir, '.claude', 'verderer-probes', KEBAB_RULE, '2026-11-09T10-00-00.json'));
   assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), report);
@@ -125,7 +123,7 @@ test('probe plants an ignored harness file in both worktrees', async (t) => {
   const rules = parseRules(HARNESS, 'CLAUDE.md').map((r) => ({ ...r, status: 'active', lastVerdict: null }));
   saveLedger(dir, { version: 1, model: { id: 'claude-test-1' }, rules });
 
-  const { report } = await probe(dir, KEBAB_RULE, { task: 'add a user store module', runner: kebabAgent([]) });
+  const { report } = await probe(dir, KEBAB_RULE, { task: 'add a user store module', judge: fakeJudge, runner: kebabAgent([]) });
 
   assert.match(report.arms.control.diff, /user-store\.js/);
   assert.match(report.arms.ablated.diff, /userStore\.js/);
@@ -143,7 +141,7 @@ test('probe works from a subdirectory of the repository', async (t) => {
   const rules = parseRules(HARNESS, 'CLAUDE.md').map((r) => ({ ...r, status: 'active', lastVerdict: null }));
   saveLedger(pkg, { version: 1, model: { id: 'claude-test-1' }, rules });
 
-  const { report } = await probe(pkg, KEBAB_RULE, { task: 'add a user store module', runner: kebabAgent([]) });
+  const { report } = await probe(pkg, KEBAB_RULE, { task: 'add a user store module', judge: fakeJudge, runner: kebabAgent([]) });
 
   assert.match(report.arms.control.diff, /packages\/api\/user-store\.js/);
   assert.doesNotMatch(report.arms.ablated.diff, /CLAUDE\.md/);
@@ -152,7 +150,7 @@ test('probe works from a subdirectory of the repository', async (t) => {
 test('probe keeps the worktrees when asked', async (t) => {
   const dir = repoWithLedger(t);
 
-  const { worktrees } = await probe(dir, KEBAB_RULE, { task: 'x', keep: true, runner: kebabAgent([]) });
+  const { worktrees } = await probe(dir, KEBAB_RULE, { task: 'x', keep: true, judge: fakeJudge, runner: kebabAgent([]) });
 
   try {
     assert.ok(existsSync(join(worktrees.ablated, 'userStore.js')));
