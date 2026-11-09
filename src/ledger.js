@@ -130,6 +130,13 @@ function stripScanFields({ blame, end, ...rule }) {
   return rule;
 }
 
+// The task a conclusive probe used, kept on the rule so the inquest can be
+// re-run when its verdict goes stale. It survives rewordings like the rest
+// of the rule's history.
+export function setProbeTask(ledger, id, task) {
+  return { ...ledger, rules: ledger.rules.map((r) => (r.id === id ? { ...r, probe: { task } } : r)) };
+}
+
 // One rule by id prefix, like a git sha.
 export function findRule(ledger, prefix) {
   const matches = prefix ? ledger.rules.filter((r) => r.id.startsWith(prefix)) : [];

@@ -69,6 +69,18 @@ model changed: claude-fable-5 → claude-fable-5-1
 
 For tools without a detection adapter yet, `verderer checkpoint --model <id>` records it by hand.
 
+Then re-run the inquests in one go. A conclusive probe keeps its task on the rule, so `verderer probe --stale` re-runs every stale verdict with that task on the new model (add `--record` to save the new verdicts):
+
+```
+re-running 1 stale inquest(s) on claude-fable-5-1
+
+25a4806f40cd  Name every new source file in kebab-case (user-store.js, not userStore.js).
+  was needed (judged on claude-fable-5) · now needed · $0.04
+  …
+```
+
+Stale rules with no saved task are listed with the `probe` command to run once by hand.
+
 ## The ledger
 
 `.claude/verderer.json` — one entry per rule:
@@ -82,7 +94,8 @@ For tools without a detection adapter yet, `verderer checkpoint --model <id>` re
   "firstSeen": "2026-03-17",
   "origin": "git:da89e1b",
   "status": "active",
-  "lastVerdict": { "date": "2026-10-31", "result": "dead", "model": "claude-fable-5", "evidence": "ablation probe: model derived it from neighboring code", "ruleId": "9f2c01ab34de" }
+  "lastVerdict": { "date": "2026-10-31", "result": "dead", "model": "claude-fable-5", "evidence": "ablation probe: model derived it from neighboring code", "ruleId": "9f2c01ab34de" },
+  "probe": { "task": "Add a TS module that imports the user store." }
 }
 ```
 
@@ -92,7 +105,6 @@ Verdicts are three-valued on purpose: **dead** (the model does it unaided), **de
 
 ## Roadmap
 
-- `probe --stale`: re-run every stale verdict with the task it was probed with.
 - Model-detection adapters beyond Claude Code (Codex sessions next); the ledger core is already tool-agnostic.
 - More sources: `.claude/agents/*.md`, `GEMINI.md`, `.cursor/rules/`, skills.
 

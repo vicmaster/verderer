@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeScan, staleVerdicts, staleReason, recordVerdict } from '../src/ledger.js';
+import { mergeScan, staleVerdicts, staleReason, recordVerdict, setProbeTask } from '../src/ledger.js';
 
 const rule = (id, text) => ({ id, text, source: 'CLAUDE.md', section: 'Conventions', line: 1 });
 
@@ -154,6 +154,17 @@ test('legacy verdicts without ruleId learn the wording they judged when reworded
 
   assert.equal(ledger.rules[0].lastVerdict.ruleId, 'old');
   assert.equal(staleVerdicts(ledger).length, 1);
+});
+
+test('a probe task is kept across scans and rewordings', () => {
+  const probed = setProbeTask(ledgerWith(known), 'old', 'add a TS module that imports another');
+  assert.deepEqual(probed.rules[0].probe, { task: 'add a TS module that imports another' });
+
+  const { ledger: rescanned } = mergeScan(probed, [rule('old', known.text)], { today: '2026-11-04' });
+  assert.equal(rescanned.rules[0].probe.task, 'add a TS module that imports another');
+
+  const { ledger: reworded } = mergeScan(probed, [rule('new', 'ESM only')], { today: '2026-11-04' });
+  assert.equal(reworded.rules[0].probe.task, 'add a TS module that imports another');
 });
 
 test('revisions accumulate across rewordings', () => {
