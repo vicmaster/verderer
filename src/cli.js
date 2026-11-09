@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { resolve, relative } from 'node:path';
 import { scan } from './scan.js';
 import { probe } from './probe.js';
 import { loadLedger, saveLedger, ledgerPath, staleVerdicts, staleReason, recordVerdict, isoToday } from './ledger.js';
@@ -11,9 +11,10 @@ Usage:
   verderer checkpoint [dir] --model <id> record the model by hand (for tools without a detection adapter)
   verderer verdict <id> <result> [dir] --evidence <text>
                                          record an inquest: dead | derivable | needed (id prefix is enough)
-  verderer probe <id> [dir] --task <text> [--budget <usd>] [--keep]
+  verderer probe <id> [dir] --task <text> [--budget <usd>] [--keep] [--record]
                                          run the task with and without the rule, on the
-                                         ledger's model, in two throwaway worktrees
+                                         ledger's model, in two throwaway worktrees; a judge
+                                         proposes the verdict, --record saves it
 
 Scan also records which model the repo is actually running on (read from the
 agent tool's own session logs — Claude Code today) and flags verdicts rendered
@@ -33,6 +34,7 @@ export async function run(argv) {
     else if (argv[i] === '--task') flags.task = argv[++i];
     else if (argv[i] === '--budget') flags.budget = Number(argv[++i]);
     else if (argv[i] === '--keep') flags.keep = true;
+    else if (argv[i] === '--record') flags.record = true;
     else positional.push(argv[i]);
   }
 
@@ -161,9 +163,9 @@ function cmdVerdict(dir, id, result, evidence) {
   }
 }
 
-async function cmdProbe(dir, id, { task, budget, keep }) {
+async function cmdProbe(dir, id, { task, budget, keep, record }) {
   if (!id || !task) {
-    console.error('usage: verderer probe <id> [dir] --task <text> [--budget <usd>] [--keep]');
+    console.error('usage: verderer probe <id> [dir] --task <text> [--budget <usd>] [--keep] [--record]');
     console.error('  the task should force the decision the rule is about,');
     console.error('  e.g. "add a user store module" for a file-naming rule');
     return 1;
@@ -191,18 +193,37 @@ async function cmdProbe(dir, id, { task, budget, keep }) {
   printArm('ablated (rule removed)', ablated);
 
   if (control.diff === ablated.diff) console.log('both runs made the same changes');
+
+  const { judge } = report;
+  const judgeCost = judge.cost === null ? '' : ` · $${judge.cost.toFixed(2)}`;
+  console.log(`judge${judgeCost}: ${judge.result}`);
+  console.log(`${indent(judge.evidence)}\n`);
+
   if (worktrees) console.log(`worktrees kept: ${worktrees.control}  ${worktrees.ablated}`);
-  console.log(`report: ${path}
+  console.log(`report: ${path}\n`);
 
-Read both diffs. Did the ablated run do the right thing without the rule?
-  yes, from the codebase      → dead (the code now carries the convention)
-  yes, but a miss is costly   → derivable (keeping it is cheap insurance)
-  no                          → needed
-If the control run got it wrong too, the task does not test the rule: probe again.
+  if (judge.result === 'inconclusive') {
+    console.log('nothing to record: the probe tested nothing. Try a task that forces the decision the rule is about.');
+    return 0;
+  }
 
-  verderer verdict ${report.rule.id.slice(0, 8)} <dead|derivable|needed> --evidence "..."`);
+  const evidence = `probe: ${judge.evidence} (${relative(dir, path)})`;
+
+  if (!record) {
+    console.log('read the diffs in the report, then record it (or overrule it):');
+    console.log(`  verderer verdict ${report.rule.id.slice(0, 8)} ${judge.result} --evidence ${shellQuote(evidence)}`);
+    return 0;
+  }
+
+  const { ledger, rule } = recordVerdict(loadLedger(dir), report.rule.id, judge.result, { evidence });
+  saveLedger(dir, ledger);
+  console.log(`recorded: ${rule.id} ${judge.result} on ${rule.lastVerdict.model}`);
 
   return 0;
+}
+
+function shellQuote(text) {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
 function printArm(label, arm) {
