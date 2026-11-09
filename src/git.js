@@ -48,3 +48,30 @@ export function blameDates(dir, relPath) {
 
   return byLine;
 }
+
+// A throwaway checkout of HEAD, detached so no branch is created.
+export function addWorktree(dir, path) {
+  const res = git(dir, ['worktree', 'add', '--detach', '--quiet', path, 'HEAD']);
+  if (res.status !== 0) throw new Error(`git worktree add failed: ${res.stderr.trim()}`);
+}
+
+export function removeWorktree(dir, path) {
+  git(dir, ['worktree', 'remove', '--force', path]);
+}
+
+// Everything the agent changed in a worktree, new files included, minus the
+// paths we planted there ourselves.
+export function worktreeChanges(path, exclude = []) {
+  git(path, ['add', '--all']);
+  const pathspec = ['--', '.', ...exclude.map((p) => `:(exclude)${p}`)];
+  return {
+    diff: git(path, ['diff', '--cached', 'HEAD', ...pathspec]).stdout,
+    stat: git(path, ['diff', '--cached', '--stat', 'HEAD', ...pathspec]).stdout.trim(),
+  };
+}
+
+// Where dir sits inside its repository ('' at the root), null outside git.
+export function repoPrefix(dir) {
+  const res = git(dir, ['rev-parse', '--show-prefix']);
+  return res.status === 0 ? res.stdout.trim() : null;
+}

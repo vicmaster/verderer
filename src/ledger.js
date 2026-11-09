@@ -68,7 +68,7 @@ export function mergeScan(ledger, scanned, { modes, model, today = isoToday() } 
   }
 
   return {
-    ledger: { version: LEDGER_VERSION, scannedAt: today, modes, model: model ?? ledger.model, rules: rules.map(stripBlame) },
+    ledger: { version: LEDGER_VERSION, scannedAt: today, modes, model: model ?? ledger.model, rules: rules.map(stripScanFields) },
     counts,
   };
 }
@@ -116,11 +116,7 @@ export function recordVerdict(ledger, prefix, result, { evidence, today = isoTod
   const model = ledger.model?.id;
   if (!model) throw new Error('no model recorded — run `verderer scan` or `verderer checkpoint --model <id>` first');
 
-  const matches = prefix ? ledger.rules.filter((r) => r.id.startsWith(prefix)) : [];
-  if (matches.length === 0) throw new Error(`no rule matches id ${prefix ?? '(none)'}`);
-  if (matches.length > 1) throw new Error(`id ${prefix} is ambiguous: ${matches.map((r) => r.id).join(', ')}`);
-
-  const [rule] = matches;
+  const rule = findRule(ledger, prefix);
   const verdict = { date: today, result, model, evidence, ruleId: rule.id };
 
   return {
@@ -129,8 +125,18 @@ export function recordVerdict(ledger, prefix, result, { evidence, today = isoTod
   };
 }
 
-function stripBlame({ blame, ...rule }) {
+// blame and end describe the file as scanned, not the rule: they stay out of the ledger.
+function stripScanFields({ blame, end, ...rule }) {
   return rule;
+}
+
+// One rule by id prefix, like a git sha.
+export function findRule(ledger, prefix) {
+  const matches = prefix ? ledger.rules.filter((r) => r.id.startsWith(prefix)) : [];
+  if (matches.length === 0) throw new Error(`no rule matches id ${prefix ?? '(none)'}`);
+  if (matches.length > 1) throw new Error(`id ${prefix} is ambiguous: ${matches.map((r) => r.id).join(', ')}`);
+
+  return matches[0];
 }
 
 export function isoToday() {
