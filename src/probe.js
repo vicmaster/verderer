@@ -6,7 +6,7 @@ import { judgeRuns } from './judge.js';
 import { parseRules } from './parse.js';
 import { SOURCES } from './scan.js';
 import { repoPrefix, addWorktree, removeWorktree, worktreeChanges } from './git.js';
-import { loadLedger, findRule } from './ledger.js';
+import { loadLedger, saveLedger, findRule, setProbeTask, staleVerdicts } from './ledger.js';
 
 // The harness without one rule: every line the rule spans goes, the rest of
 // the file stays byte for byte. null when the rule is not in this file.
@@ -70,13 +70,29 @@ export async function probe(dir, prefix, { task, budget = 2, keep = false, runne
       judge: await judge({ rule: subject, task, arms: results, model, budget }),
     };
 
-    return { report, path: saveReport(dir, report, now), worktrees: keep ? arms : null };
+    const path = saveReport(dir, report, now);
+
+    // Only a task that tested the rule is worth re-running when the verdict goes stale.
+    if (report.judge.result !== 'inconclusive') {
+      saveLedger(dir, setProbeTask(loadLedger(dir), rule.id, task));
+    }
+
+    return { report, path, worktrees: keep ? arms : null };
   } finally {
     if (!keep) {
       for (const path of Object.values(arms)) removeWorktree(dir, path);
       rmSync(root, { recursive: true, force: true });
     }
   }
+}
+
+// Stale verdicts split by whether a saved task can re-run their inquest.
+export function staleQueue(ledger) {
+  const stale = staleVerdicts(ledger);
+  return {
+    runnable: stale.filter((r) => r.probe?.task),
+    missing: stale.filter((r) => !r.probe?.task),
+  };
 }
 
 // Harness files as they are on disk now (ignored and uncommitted ones too),

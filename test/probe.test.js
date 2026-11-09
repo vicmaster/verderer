@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { parseRules, ruleId } from '../src/parse.js';
-import { ablate, probe } from '../src/probe.js';
-import { saveLedger } from '../src/ledger.js';
+import { ablate, probe, staleQueue } from '../src/probe.js';
+import { saveLedger, loadLedger } from '../src/ledger.js';
 
 const HARNESS = `# repo
 
@@ -110,6 +110,37 @@ test('probe runs the task with and without the rule and reports both', async (t)
   assert.ok(calls.every((c) => !existsSync(c.cwd)), 'worktrees are cleaned up');
   assert.equal(execSync('git worktree list', { cwd: dir, encoding: 'utf8' }).trim().split('\n').length, 1);
   assert.equal(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), HARNESS, 'the real harness is untouched');
+});
+
+test('a conclusive probe keeps its task on the rule; an inconclusive one does not', async (t) => {
+  const dir = repoWithLedger(t);
+  const task = 'add a user store module';
+  const ruleIn = (id) => loadLedger(dir).rules.find((r) => r.id === id);
+
+  await probe(dir, KEBAB_RULE, { task, runner: kebabAgent([]), judge: fakeJudge });
+  assert.deepEqual(ruleIn(KEBAB_RULE).probe, { task });
+
+  const inconclusive = async () => ({ result: 'inconclusive', evidence: 'tested nothing', cost: 0.1 });
+  await probe(dir, TESTS_RULE, { task, runner: kebabAgent([]), judge: inconclusive });
+  assert.equal(ruleIn(TESTS_RULE).probe, undefined);
+});
+
+test('staleQueue splits stale verdicts by whether a saved task can re-run them', () => {
+  const verdict = { result: 'needed', model: 'claude-old', evidence: 'x' };
+  const ledger = {
+    model: { id: 'claude-new' },
+    rules: [
+      { id: 'a', status: 'active', lastVerdict: verdict, probe: { task: 'do a' } },
+      { id: 'b', status: 'active', lastVerdict: verdict },
+      { id: 'c', status: 'active', lastVerdict: { ...verdict, model: 'claude-new' }, probe: { task: 'do c' } },
+      { id: 'd', status: 'retired', lastVerdict: verdict, probe: { task: 'do d' } },
+    ],
+  };
+
+  const { runnable, missing } = staleQueue(ledger);
+
+  assert.deepEqual(runnable.map((r) => r.id), ['a']);
+  assert.deepEqual(missing.map((r) => r.id), ['b']);
 });
 
 test('probe plants an ignored harness file in both worktrees', async (t) => {
