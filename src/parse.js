@@ -27,7 +27,7 @@ export function parseRules(markdown, source) {
     if (!current) return;
     const text = current.lines.join('\n').trim();
     if (!(current.paragraph && BOLD_LABEL.test(text))) {
-      rules.push({ id: ruleId(text), text, source, section, line: current.line });
+      rules.push({ id: ruleId(text), text, source, section, line: current.line, end: current.end });
     }
     current = null;
   };
@@ -39,7 +39,7 @@ export function parseRules(markdown, source) {
 
     // Code: skipped, unless it is indented under a rule (an example inside it).
     if (fence) {
-      if (fence.owner && !blank) fence.owner.lines.push(line.trim());
+      if (fence.owner && !blank) take(fence.owner, line.trim(), i);
       if (FENCE.test(line)) {
         fence = null;
         afterBlank = true;
@@ -49,7 +49,7 @@ export function parseRules(markdown, source) {
 
     if (FENCE.test(line)) {
       const owner = current && CONTINUATION.test(line) ? current : null;
-      if (owner) owner.lines.push(line.trim());
+      if (owner) take(owner, line.trim(), i);
       else flush();
       fence = { owner };
       continue;
@@ -68,26 +68,32 @@ export function parseRules(markdown, source) {
     const item = line.match(LIST_ITEM);
     if (item && !THEMATIC_BREAK.test(line)) {
       flush();
-      current = { lines: [line.slice(item[0].length)], line: i + 1, paragraph: false };
+      current = { lines: [line.slice(item[0].length)], line: i + 1, end: i + 1, paragraph: false };
       afterBlank = false;
       continue;
     }
 
     if (current && (CONTINUATION.test(line) || (current.paragraph && !blank))) {
-      current.lines.push(line.trim());
+      take(current, line.trim(), i);
       continue;
     }
 
     flush();
 
     if (afterBlank && BOLD_LEAD.test(line)) {
-      current = { lines: [line], line: i + 1, paragraph: true };
+      current = { lines: [line], line: i + 1, end: i + 1, paragraph: true };
     }
     afterBlank = blank;
   }
   flush();
 
   return rules;
+}
+
+// A rule spans from its first line to the last one it took (1-based, inclusive).
+function take(rule, text, index) {
+  rule.lines.push(text);
+  rule.end = index + 1;
 }
 
 // Stable across reformatting: whitespace collapses before hashing.

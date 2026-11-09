@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { scan } from './scan.js';
+import { probe } from './probe.js';
 import { loadLedger, saveLedger, ledgerPath, staleVerdicts, staleReason, recordVerdict, isoToday } from './ledger.js';
 
 const HELP = `verderer — a rule ledger for AI agent harnesses
@@ -10,7 +11,9 @@ Usage:
   verderer checkpoint [dir] --model <id> record the model by hand (for tools without a detection adapter)
   verderer verdict <id> <result> [dir] --evidence <text>
                                          record an inquest: dead | derivable | needed (id prefix is enough)
-  verderer probe                         print the manual ablation recipe (automation is the roadmap)
+  verderer probe <id> [dir] --task <text> [--budget <usd>] [--keep]
+                                         run the task with and without the rule, on the
+                                         ledger's model, in two throwaway worktrees
 
 Scan also records which model the repo is actually running on (read from the
 agent tool's own session logs — Claude Code today) and flags verdicts rendered
@@ -27,6 +30,9 @@ export async function run(argv) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--model') flags.model = argv[++i];
     else if (argv[i] === '--evidence') flags.evidence = argv[++i];
+    else if (argv[i] === '--task') flags.task = argv[++i];
+    else if (argv[i] === '--budget') flags.budget = Number(argv[++i]);
+    else if (argv[i] === '--keep') flags.keep = true;
     else positional.push(argv[i]);
   }
 
@@ -44,8 +50,10 @@ export async function run(argv) {
       const [id, result, dirArg] = args;
       return cmdVerdict(resolve(dirArg ?? '.'), id, result, flags.evidence);
     }
-    case 'probe':
-      return cmdProbe();
+    case 'probe': {
+      const [id, dirArg] = args;
+      return cmdProbe(resolve(dirArg ?? '.'), id, flags);
+    }
     case undefined:
     case '--help':
     case '-h':
@@ -153,22 +161,63 @@ function cmdVerdict(dir, id, result, evidence) {
   }
 }
 
-function cmdProbe() {
-  console.log(`probe automation is on the roadmap. The manual recipe (validated on a real repo):
+async function cmdProbe(dir, id, { task, budget, keep }) {
+  if (!id || !task) {
+    console.error('usage: verderer probe <id> [dir] --task <text> [--budget <usd>] [--keep]');
+    console.error('  the task should force the decision the rule is about,');
+    console.error('  e.g. "add a user store module" for a file-naming rule');
+    return 1;
+  }
 
-1. git worktree add --detach <tmp>/probe <branch>   # one worktree per suspect rule
-2. Copy the harness file in and delete ONE rule.
-3. In the worktree, run a task that forces exactly that decision:
-     claude -p "<task>" --permission-mode acceptEdits
-4. Inspect the result: did the model do the right thing without the rule?
-     - yes, by reading the codebase → the rule is dead (the code now carries the convention)
-     - yes, but a miss would be expensive → derivable; keeping it is cheap insurance
-     - no → the rule still earns its place
-5. Record it: verderer verdict <id> <dead|derivable|needed> --evidence "..."
-   then prune with evidence.
+  if (budget !== undefined && !(budget > 0)) {
+    console.error('--budget must be a positive amount in USD, per run');
+    return 1;
+  }
 
-Verdicts are judgment calls on blast radius — verderer reports, you decide. It never auto-deletes.`);
+  let outcome;
+  try {
+    outcome = await probe(dir, id, { task, budget, keep });
+  } catch (err) {
+    console.error(err.message);
+    return 1;
+  }
+
+  const { report, path, worktrees } = outcome;
+  const { control, ablated } = report.arms;
+
+  console.log(`probe ${report.rule.id} on ${report.model}`);
+  console.log(`  ${truncate(report.rule.text, 100)}\n`);
+  printArm('control (full harness)', control);
+  printArm('ablated (rule removed)', ablated);
+
+  if (control.diff === ablated.diff) console.log('both runs made the same changes');
+  if (worktrees) console.log(`worktrees kept: ${worktrees.control}  ${worktrees.ablated}`);
+  console.log(`report: ${path}
+
+Read both diffs. Did the ablated run do the right thing without the rule?
+  yes, from the codebase      → dead (the code now carries the convention)
+  yes, but a miss is costly   → derivable (keeping it is cheap insurance)
+  no                          → needed
+If the control run got it wrong too, the task does not test the rule: probe again.
+
+  verderer verdict ${report.rule.id.slice(0, 8)} <dead|derivable|needed> --evidence "..."`);
+
   return 0;
+}
+
+function printArm(label, arm) {
+  const cost = arm.cost === null ? '' : ` · $${arm.cost.toFixed(2)}`;
+  const turns = arm.turns === null ? '' : ` · ${arm.turns} turns`;
+  console.log(`${label}${cost}${turns}`);
+
+  if (arm.error) console.log(`  error: ${arm.error}`);
+  if (arm.denials > 0) console.log(`  ${arm.denials} tool call(s) denied`);
+  console.log(arm.stat ? indent(arm.stat) : '  (no changes)');
+  console.log('');
+}
+
+function indent(text) {
+  return text.split('\n').map((line) => `  ${line}`).join('\n');
 }
 
 function truncate(s, n) {
