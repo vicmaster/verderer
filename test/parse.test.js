@@ -118,3 +118,24 @@ test("spec-kit's generated sections are not rules", () => {
 test('thematic breaks are not rules', () => {
   assert.deepEqual(texts('- a rule\n\n* * *\n\n- - -\n'), ['a rule']);
 });
+
+test('YAML frontmatter is not rules; line numbers still count it', () => {
+  const agent = `---
+name: reviewer
+tools:
+  - Read
+  - Grep
+---
+
+- Flag every unchecked return value.
+`;
+  const rules = parseRules(agent, '.claude/agents/reviewer.md');
+
+  assert.deepEqual(rules.map((r) => [r.text, r.line]), [['Flag every unchecked return value.', 8]]);
+});
+
+test('a thematic break later in the file is not frontmatter', () => {
+  const rules = parseRules('- First rule.\n\n---\n\n- Second rule.\n', 'CLAUDE.md');
+
+  assert.deepEqual(rules.map((r) => r.text), ['First rule.', 'Second rule.']);
+});

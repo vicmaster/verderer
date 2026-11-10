@@ -15,7 +15,8 @@ const CONTINUATION = /^\s{2,}\S/;
 // opens with a bold lead ("**Never trust a merged schema.** Every module…");
 // a bold label alone ("**Quick Tips:**") is a heading in disguise, not a rule.
 // Indented lines belong to the item above, nested lists too: they qualify the
-// rule, they are not rules of their own. Plain prose and code are not rules.
+// rule, they are not rules of their own. Plain prose and code are not rules,
+// and neither is YAML frontmatter (agents, skills, Cursor rules open with it).
 export function parseRules(markdown, source) {
   const rules = [];
   let section = '';
@@ -33,7 +34,7 @@ export function parseRules(markdown, source) {
   };
 
   const lines = markdown.split('\n');
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = frontmatterLength(lines); i < lines.length; i++) {
     const line = lines[i];
     const blank = line.trim() === '';
 
@@ -88,6 +89,14 @@ export function parseRules(markdown, source) {
   flush();
 
   return rules;
+}
+
+// Lines taken by a leading `---` … `---` block, 0 when there is none.
+function frontmatterLength(lines) {
+  if (lines[0]?.trim() !== '---') return 0;
+
+  const close = lines.findIndex((line, i) => i > 0 && line.trim() === '---');
+  return close === -1 ? 0 : close + 1;
 }
 
 // A rule spans from its first line to the last one it took (1-based, inclusive).

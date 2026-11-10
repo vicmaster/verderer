@@ -1,10 +1,10 @@
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { headless } from './claude.js';
 import { judgeRuns } from './judge.js';
 import { parseRules } from './parse.js';
-import { SOURCES } from './scan.js';
+import { harnessFiles } from './scan.js';
 import { repoPrefix, addWorktree, removeWorktree, worktreeChanges } from './git.js';
 import { loadLedger, saveLedger, findRule, setProbeTask, staleVerdicts } from './ledger.js';
 
@@ -34,6 +34,9 @@ export async function probe(dir, prefix, { task, budget = 2, keep = false, runne
 
   const model = ledger.model?.id;
   if (!model) throw new Error('no model recorded — run `verderer scan` or `verderer checkpoint --model <id>` first');
+  if (ledger.model.source === 'codex-sessions') {
+    throw new Error(`probes run on Claude Code, but ${model} comes from Codex sessions — \`verderer checkpoint --model <claude id>\` to probe on Claude`);
+  }
 
   const sub = repoPrefix(dir);
   if (sub === null) throw new Error('probe needs a git repository: each run gets its own worktree');
@@ -46,9 +49,10 @@ export async function probe(dir, prefix, { task, budget = 2, keep = false, runne
   try {
     for (const [arm, path] of Object.entries(arms)) {
       addWorktree(dir, path);
-      mkdirSync(join(path, sub), { recursive: true });
       for (const [source, text] of Object.entries(harness[arm])) {
-        writeFileSync(join(path, sub, source), text);
+        const file = join(path, sub, source);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, text);
       }
     }
 
@@ -102,11 +106,8 @@ function harnessVersions(dir, id) {
   const control = {};
   const ablated = {};
 
-  for (const source of SOURCES) {
-    const path = join(dir, source);
-    if (!existsSync(path)) continue;
-
-    const text = readFileSync(path, 'utf8');
+  for (const source of harnessFiles(dir)) {
+    const text = readFileSync(join(dir, source), 'utf8');
     control[source] = text;
     ablated[source] = ablate(text, source, id) ?? text;
   }

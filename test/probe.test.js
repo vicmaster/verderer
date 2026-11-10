@@ -202,4 +202,24 @@ test('probe refuses without a task, a model, or a rule still in the file', async
 
   saveLedger(dir, { version: 1, rules: [{ id: KEBAB_RULE, text: 'x', status: 'active' }] });
   await assert.rejects(probe(dir, KEBAB_RULE, { task: 'x', runner }), /no model recorded/);
+
+  saveLedger(dir, { version: 1, model: { id: 'gpt-6.1-sol', source: 'codex-sessions' }, rules: [{ id: KEBAB_RULE, text: 'x', status: 'active' }] });
+  await assert.rejects(probe(dir, KEBAB_RULE, { task: 'x', runner }), /comes from Codex sessions/);
+});
+
+test('probe removes the rule from a sub-agent file too', async (t) => {
+  const dir = repoWithLedger(t);
+  const agent = '---\nname: builder\n---\n- Name files in kebab-case.\n- Keep functions short.\n';
+  mkdirSync(join(dir, '.claude', 'agents'), { recursive: true });
+  writeFileSync(join(dir, '.claude', 'agents', 'builder.md'), agent);
+
+  const { worktrees } = await probe(dir, KEBAB_RULE, { task: 'x', keep: true, judge: fakeJudge, runner: kebabAgent([]) });
+
+  try {
+    const planted = (arm) => readFileSync(join(worktrees[arm], '.claude', 'agents', 'builder.md'), 'utf8');
+    assert.equal(planted('control'), agent);
+    assert.equal(planted('ablated'), '---\nname: builder\n---\n- Keep functions short.\n');
+  } finally {
+    Object.values(worktrees).forEach((p) => execSync(`git worktree remove --force ${p}`, { cwd: dir }));
+  }
 });
