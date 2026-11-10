@@ -22,7 +22,9 @@ npx verderer probe 9f2c --task "add a user store module"
                                          # run the task with and without the rule, judge the diffs
 ```
 
-A rule is a top-level list item (`-`, `*`, `+`, `1.`) or a paragraph that opens with a bold lead (`**Never trust a merged schema.** Every module…`). Code blocks and spec-kit's generated sections (`Active Technologies`, `Recent Changes`) are skipped.
+`scan` reads `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` at the root, sub-agents in `.claude/agents/*.md`, skills in `.claude/skills/*/SKILL.md`, and Cursor rules in `.cursor/rules/` (`.md` and `.mdc`). A symlinked harness (`AGENTS.md → CLAUDE.md`) counts once, and a rule repeated across files is one ledger entry, carried by the first file that has it.
+
+A rule is a top-level list item (`-`, `*`, `+`, `1.`) or a paragraph that opens with a bold lead (`**Never trust a merged schema.** Every module…`). YAML frontmatter, code blocks and spec-kit's generated sections (`Active Technologies`, `Recent Changes`) are skipped.
 
 `scan` is idempotent and append-only: known rules keep their provenance and verdicts, new rules are dated, rules that left the file are marked retired — never deleted. The ledger is the history of your harness's law.
 
@@ -40,7 +42,9 @@ Verderer checks how git sees each harness file and adapts:
 `verderer probe <id> --task "<text>"` holds an inquest by experiment. It checks out HEAD into two throwaway worktrees, plants your harness files as they are on disk (ignored and uncommitted ones too), removes the rule from one of them, and runs the same task in both with headless Claude Code on the model the ledger records:
 
 - **control** — full harness. If this run gets it wrong, the task doesn't test the rule.
-- **ablated** — the rule removed (from every harness file that carries it).
+- **ablated** — the rule removed (from every harness file that carries it, sub-agents and skills included).
+
+Probes run on Claude Code, so a ledger whose model was detected from Codex sessions can't be probed yet (`checkpoint` a Claude model to probe on it).
 
 Pick a task that forces the decision the rule is about: for "name files in kebab-case", ask for a new module. Each run is capped by `--budget` (USD, default 2), edits are auto-accepted, and only project settings load, so a copy of the rule in `~/.claude/CLAUDE.md` can't leak into the ablated run. Probe sessions aren't saved, so they never count toward model detection.
 
@@ -60,7 +64,13 @@ Diffs, results, costs and the judgment go to `.claude/verderer-probes/<id>/<time
 
 ## Model changes
 
-Verderer never polls for releases. The question that matters is narrower: **is this repo running on a different model than the one your verdicts were judged against?** Every verdict records its model; `scan` reads the model id the repo actually ran on from the agent tool's own session logs (Claude Code transcripts today — concrete ids, so a stable `"opus"` alias doesn't hide an upgrade underneath) and flags verdicts judged on another model as stale:
+Verderer never polls for releases. The question that matters is narrower: **is this repo running on a different model than the one your verdicts were judged against?** Every verdict records its model; `scan` reads the model id the repo actually ran on from the agent tool's own session logs and flags verdicts judged on another model as stale. Those logs carry concrete ids, so a stable `"opus"` alias doesn't hide an upgrade underneath:
+
+- **Claude Code** — `~/.claude/projects/<repo>/*.jsonl`
+- **Codex** — `$CODEX_HOME/sessions/**/rollout-*.jsonl` (default `~/.codex`), sessions started in the repo or any folder under it
+
+When both have sessions for the repo, the one that ran last wins.
+
 
 ```
 model changed: claude-fable-5 → claude-fable-5-1
@@ -105,8 +115,9 @@ Verdicts are three-valued on purpose: **dead** (the model does it unaided), **de
 
 ## Roadmap
 
-- Model-detection adapters beyond Claude Code (Codex sessions next); the ledger core is already tool-agnostic.
-- More sources: `.claude/agents/*.md`, `GEMINI.md`, `.cursor/rules/`, skills.
+- Model-detection adapters beyond Claude Code and Codex; the ledger core is already tool-agnostic.
+- Probes on Codex (`codex exec`), so Codex-detected models can be probed too.
+- Nested harness files (`packages/*/CLAUDE.md`, `AGENTS.md` in subfolders).
 
 ## Development
 

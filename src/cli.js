@@ -6,7 +6,7 @@ import { loadLedger, saveLedger, ledgerPath, staleVerdicts, staleReason, recordV
 const HELP = `verderer — a rule ledger for AI agent harnesses
 
 Usage:
-  verderer scan [dir]                    inventory harness rules (CLAUDE.md, AGENTS.md) into .claude/verderer.json
+  verderer scan [dir]                    inventory harness rules into .claude/verderer.json
   verderer status [dir]                  show the ledger: active/retired rules, provenance, verdicts
   verderer checkpoint [dir] --model <id> record the model by hand (for tools without a detection adapter)
   verderer verdict <id> <result> [dir] --evidence <text>
@@ -18,9 +18,10 @@ Usage:
   verderer probe --stale [dir] [--budget <usd>] [--record]
                                          re-run every stale verdict with its rule's saved task
 
-Scan also records which model the repo is actually running on (read from the
-agent tool's own session logs — Claude Code today) and flags verdicts rendered
-against a different model as stale.
+Scan reads CLAUDE.md, AGENTS.md, GEMINI.md, .claude/agents/*.md,
+.claude/skills/*/SKILL.md and .cursor/rules/. It also records which model the
+repo is actually running on (read from Claude Code and Codex session logs) and
+flags verdicts rendered against a different model as stale.
 
 The ledger adapts to how git sees each harness file:
   tracked   → provenance comes free from git blame; prune via normal commits/PRs
@@ -77,7 +78,7 @@ function cmdScan(dir) {
   const sources = Object.entries(modes);
 
   if (sources.length === 0) {
-    console.error('no harness files found (looked for CLAUDE.md, AGENTS.md)');
+    console.error('no harness files found (looked for CLAUDE.md, AGENTS.md, GEMINI.md, .claude/agents, .claude/skills, .cursor/rules)');
     return 1;
   }
 
